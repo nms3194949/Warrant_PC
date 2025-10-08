@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>MOMO權證篩選器</title>
+<title>權證本地篩選（精簡版）</title>
 <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/xlsx/dist/cpexcel.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
@@ -25,7 +25,10 @@
   th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;white-space:nowrap}
   th{position:sticky;top:0;background:#0f1b34;z-index:1}
   tbody tr:hover{background:#0f1b34}
-  .tag{display:inline-block;border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:12px}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.C{background:#E25A5A;color:#fff;border:none;}
+  .tag.P{background:#39C27A;color:#fff;border:none;}
+  .tag:not(.C):not(.P){border:1px solid var(--line);color:#ccc}
   .hint{font-size:12px;color:var(--muted)}
   .gold-text{background:var(--gold-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700}
   .exporting .gold-text{background:none !important;-webkit-text-fill-color:var(--gold-solid) !important;color:var(--gold-solid) !important}
@@ -118,7 +121,7 @@ function compute(){
   return rows;
 }
 function rowHTML(r){
-  return `<td><b>${r.code??""}</b></td><td>${r.name??""}</td><td><span class="tag">${r.cp??""}</span></td>
+  return `<td><b>${r.code??""}</b></td><td>${r.name??""}</td><td><span class="tag ${r.cp??""}">${r.cp??""}</span></td>
     <td>${fmtNum(r.spread,3)}</td><td>${fmtNum(Math.abs(r.leverage),3)}</td><td>${fmtNum(r.exercise,3)}</td>
     <td class="gold-text">${showPct100(r.s1,2)}</td><td class="gold-text">${showPct100(r.s2,2)}</td>
     <td>${r.days_left??"—"}</td><td>${r.strike??""}</td><td>${r.price==null?"":fmtNum(r.price,3)}</td>
