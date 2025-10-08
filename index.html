@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>權證本地篩選（精簡版）</title>
+<script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/xlsx/dist/cpexcel.full.min.js"></script>
+<style>
+  :root{ --deep:#0A1221; --card:#0C152A; --gold:#C9A227; --line:#223356; --muted:#9fb0d0;}
+  html,body{margin:0;background:var(--deep);color:#fff;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+  .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .field{flex:1 1 220px;background:#0b1630;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:#fff;font-size:16px}
+  label.chk{display:flex;align-items:center;gap:8px;background:#0b1630;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;white-space:nowrap}
+  th{position:sticky;top:0;background:#0f1b34;z-index:1}
+  tbody tr:hover{background:#0f1b34}
+  .tag{display:inline-block;border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:12px}
+  .hint{font-size:12px;color:var(--muted)}
+  .gold-text{color:var(--gold);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h3 style="margin:0">權證本地篩選（精簡）</h3>
+    <p id="meta" class="hint">上傳 CSV / XLSX；預設：認購、排序 S1 升冪、排除價差比=0、距到期>60 天。</p>
+    <div class="row">
+      <input id="fileInput" type="file" class="field" accept=".csv,.xlsx,.xls" />
+      <select id="selType" class="field" style="max-width:160px">
+        <option value="C" selected>認購 (C)</option>
+        <option value="P">認售 (P)</option>
+      </select>
+      <select id="selSortKey" class="field" style="max-width:260px">
+        <option value="spread">價差比</option>
+        <option value="leverage">槓桿</option>
+        <option value="s1" selected>S1 = 價差比/槓桿</option>
+        <option value="s2">S2 = 價差比/槓桿/行使比例</option>
+        <option value="days_left">距到期天數</option>
+        <option value="iv">成交價隱波</option>
+      </select>
+      <select id="selOrder" class="field" style="max-width:140px">
+        <option value="asc" selected>升冪</option>
+        <option value="desc">降冪</option>
+      </select>
+      <label class="chk">
+        <input type="checkbox" id="chkFilterZeroSpread" checked />
+        排除價差比=0
+      </label>
+    </div>
+  </div>
+
+  <div id="resultCard" class="card" style="margin-top:12px;display:none">
+    <div class="hint" id="meta2"></div>
+    <div style="overflow:auto;max-height:70vh;margin-top:6px">
+      <table>
+        <thead>
+          <tr>
+            <th>代號</th><th>名稱</th><th>認購/售</th>
+            <th>價差比</th><th>槓桿</th><th>行使比例</th>
+            <th>S1 = 價差比/槓桿</th><th>S2 = 價差比/槓桿/行使比例</th>
+            <th>距到期天數</th><th>履約價</th><th>權證成交價</th>
+            <th>成交價隱波</th><th>價內外程度</th><th>流通在外比率</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ==== 小工具（保留最少） ==== */
+const $=s=>document.querySelector(s);
+const fmtNum=(v,d=2)=>(v==null||!isFinite(v))?"—":(+v).toFixed(d);
+const showPct100=(v,d=2)=>(v==null||!isFinite(v))?"—":(v*100).toFixed(d)+"%";
+function toHalfWidth(s){return String(s).replace(/[\uFF01-\uFF5E]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');}
+function num(x){if(x==null)return null;let s=String(x).trim();if(!s)return null;s=toHalfWidth(s).replace(/,/g,"").replace(/%$/,"");if(/^\.\d+$/.test(s))s="0"+s;const v=parseFloat(s);return isNaN(v)?null:v;}
+function normalizeKey(k){if(k==null)return"";let s=String(k).replace(/\uFEFF/g,"");s=toHalfWidth(s).trim().replace(/\s+/g,"").replace(/\([^)]*\)/g,"").replace(/%/g,"");if(s.startsWith("Unnamed")||s==="__EMPTY")return"";return s.toLowerCase();}
+const ALIAS={"權證代碼":["權證代碼","代碼"],"權證名稱":["權證名稱","名稱"],"買賣價差比":["買賣價差比","價差比"],"實質槓桿":["實質槓桿","槓桿"],"行使比例":["行使比例","轉換比率"],"距到期天數":["距到期天數","剩餘天數"],"履約價":["履約價"],"權證成交價":["權證成交價","成交價"],"成交價隱波":["成交價隱波","隱含波動率"],"價內外程度":["價內外程度"],"流通在外比率":["流通在外比率"]};
+const N2STD=(()=>{const m=new Map();for(const s in ALIAS){ALIAS[s].forEach(a=>m.set(normalizeKey(a),s));}return m;})();
+function normRow(row){const o={};for(const k in row){const nk=normalizeKey(k);if(!nk)continue;o[N2STD.get(nk)||k]=row[k];}return o;}
+function mojibake(keys){if(!keys||!keys.length)return true;const s=keys.join("|");return / /.test(s)||(!/[\u4E00-\u9FFF]/.test(s)&&/[\u00C0-\u024F]/.test(s));}
+
+/* ==== 狀態 ==== */
+let RAW=[], ROWS=[];
+
+/* ==== 讀檔（CSV: Big5→UTF8；XLSX: array） ==== */
+$("#fileInput").addEventListener("change",()=>{
+  const f=$("#fileInput").files[0]; if(!f) return;
+  const done=(arr,label)=>{
+    RAW=arr.map(normRow).filter(r=>Object.keys(r).length);
+    $("#meta").textContent=`已載入：${f.name}（${label}），筆數 ${RAW.length}`;
+    recompute();
+  };
+  if(/\.csv$/i.test(f.name)){
+    const r1=new FileReader();
+    r1.onload=e=>{
+      try{
+        let wb=XLSX.read(e.target.result,{type:"binary",codepage:950});
+        let arr=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+        if(mojibake(Object.keys(arr[0]||{}))) throw 0;
+        done(arr,"Big5");
+      }catch{
+        const r2=new FileReader();
+        r2.onload=e2=>{
+          let wb=XLSX.read(e2.target.result,{type:"string",codepage:65001});
+          let arr=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+          done(arr,"UTF-8");
+        };
+        r2.readAsText(f,"utf-8");
+      }
+    };
+    r1.readAsBinaryString(f);
+  }else{
+    const r=new FileReader();
+    r.onload=e=>{
+      let wb=XLSX.read(e.target.result,{type:"array"});
+      let arr=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+      done(arr,"XLSX");
+    };
+    r.readAsArrayBuffer(f);
+  }
+});
+
+/* ==== 計算 + 渲染（即時） ==== */
+function compute(){
+  if(!RAW.length) return [];
+  const want=$("#selType").value, dropZero=$("#chkFilterZeroSpread").checked;
+  const rows=RAW.map(r=>{
+    const name=r["權證名稱"]??"", code=r["權證代碼"];
+    let cp=""; if(/[售]/.test(name)||/\bP\b/i.test(name)||/PUT/i.test(name))cp="P";
+    else if(/[購]/.test(name)||/\bC\b/i.test(name)||/CALL/i.test(name))cp="C";
+    const spread=num(r["買賣價差比"]), lev=num(r["實質槓桿"]), exr=num(r["行使比例"]), days=num(r["距到期天數"]);
+    const s1=(spread!=null && Math.abs(lev)>0)? spread/Math.abs(lev):null;
+    const s2=(s1!=null && exr>0)? s1/exr:null;
+    return{code,name,cp,spread,leverage:lev,exercise:exr,s1,s2,
+           days_left:isFinite(days)?Math.round(days):null,
+           strike:r["履約價"],price:r["權證成交價"]??r["成交價"],
+           iv:num(r["成交價隱波"]),moneyness:r["價內外程度"],float_rate:r["流通在外比率"]};
+  }).filter(x=>x.cp===want && (x.days_left==null || x.days_left>60) && (!dropZero || (+x.spread!==0)));
+
+  const key=$("#selSortKey").value, dir=$("#selOrder").value==="desc"?-1:1;
+  rows.sort((a,b)=>{const va=a[key],vb=b[key]; if(va==null&&vb==null)return 0; if(va==null)return 1; if(vb==null)return -1; return (va>vb?1:(va<vb?-1:0))*dir;});
+  return rows;
+}
+function render(rows){
+  $("#resultCard").style.display="block";
+  $("#meta2").textContent=`筆數：${rows.length}（${$("#selType").value}、距到期>60、${$("#chkFilterZeroSpread").checked?"排除價差=0":"含價差=0"}）`;
+  const tb=$("#tbody"); tb.innerHTML="";
+  rows.forEach(r=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td><b>${r.code??""}</b></td>
+      <td>${r.name??""}</td>
+      <td><span class="tag">${r.cp??""}</span></td>
+      <td>${fmtNum(r.spread,3)}</td>
+      <td>${fmtNum(Math.abs(r.leverage),3)}</td>
+      <td>${fmtNum(r.exercise,3)}</td>
+      <td class="gold-text">${showPct100(r.s1,2)}</td>
+      <td class="gold-text">${showPct100(r.s2,2)}</td>
+      <td>${r.days_left??"—"}</td>
+      <td>${r.strike??""}</td>
+      <td>${r.price==null?"":fmtNum(r.price,3)}</td>
+      <td>${r.iv==null?"—":fmtNum(r.iv,3)}</td>
+      <td>${r.moneyness??""}</td>
+      <td>${r.float_rate??""}</td>`;
+    tb.appendChild(tr);
+  });
+}
+function recompute(){ const rows=compute(); render(rows); }
+
+/* 即時重算 */
+["selType","selSortKey","selOrder","chkFilterZeroSpread"].forEach(id=>$(id).addEventListener("change",recompute));
+</script>
+</body>
+</html>
