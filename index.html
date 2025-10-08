@@ -4,30 +4,73 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>權證本地篩選（精簡版）</title>
+<!-- 讀檔用 -->
 <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/xlsx/dist/cpexcel.full.min.js"></script>
+<!-- 匯出 PNG 用 -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
-  :root{ --deep:#0A1221; --card:#0C152A; --gold:#C9A227; --line:#223356; --muted:#9fb0d0;}
+  :root{
+    --deep:#0A1221;
+    --card:#0C152A;
+    --gold:#C9A227;
+    --gold-grad:linear-gradient(90deg,#F9E27C 0%,#D9B84B 50%,#B88A1E 100%);
+    --line:#223356;
+    --muted:#9fb0d0;
+  }
   html,body{margin:0;background:var(--deep);color:#fff;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
   .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .field{flex:1 1 220px;background:#0b1630;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:#fff;font-size:16px}
   label.chk{display:flex;align-items:center;gap:8px;background:#0b1630;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+
+  /* 亮金漸層按鈕 */
+  .btn-link{
+    background:var(--gold-grad);
+    color:#000;
+    border:none;
+    border-radius:10px;
+    padding:10px 16px;
+    font-weight:700;
+    cursor:pointer;
+    text-decoration:none;
+    transition:all .2s;
+    white-space:nowrap;
+  }
+  .btn-link:hover{
+    background:linear-gradient(90deg,#FFEFA5 0%,#F4D97A 50%,#E0B94A 100%);
+    transform:translateY(-1px);
+  }
+
+  /* 表格樣式 */
   table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
   th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;white-space:nowrap}
   th{position:sticky;top:0;background:#0f1b34;z-index:1}
   tbody tr:hover{background:#0f1b34}
   .tag{display:inline-block;border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:12px}
   .hint{font-size:12px;color:var(--muted)}
-  .gold-text{color:var(--gold);font-weight:700}
+
+  /* S1 / S2 的漸層金文字 */
+  .gold-text{
+    background:var(--gold-grad);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+    font-weight:700;
+  }
+
+  /* 小螢幕優化 */
+  @media (max-width:540px){
+    .field{flex:1 1 160px}
+    .btn-link{padding:10px 14px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <h3 style="margin:0">權證本地篩選（精簡）</h3>
-    <p id="meta" class="hint">上傳 CSV / XLSX；預設：認購、排序 S1 升冪、排除價差比=0、距到期>60 天。</p>
+    <p id="meta" class="hint">上傳 CSV / XLSX；預設：認購、排序 S1 升冪、排除價差比=0、距到期&gt;60 天。</p>
     <div class="row">
       <input id="fileInput" type="file" class="field" accept=".csv,.xlsx,.xls" />
       <select id="selType" class="field" style="max-width:160px">
@@ -46,17 +89,32 @@
         <option value="asc" selected>升冪</option>
         <option value="desc">降冪</option>
       </select>
+
+      <!-- 顯示列數 -->
+      <select id="selLimit" class="field" style="max-width:140px">
+        <option value="5">顯示 5 列</option>
+        <option value="10" selected>顯示 10 列</option>
+        <option value="15">顯示 15 列</option>
+        <option value="20">顯示 20 列</option>
+      </select>
+
       <label class="chk">
         <input type="checkbox" id="chkFilterZeroSpread" checked />
         排除價差比=0
       </label>
+
+      <!-- 外部連結按鈕 -->
+      <a href="https://www.warrantwin.com.tw/eyuanta/Warrant/Search.aspx" target="_blank" class="btn-link">前往元大權證搜尋</a>
+      <!-- 匯出 PNG、分享 -->
+      <button id="btnExportPng" class="btn-link" type="button">匯出 PNG</button>
+      <button id="btnShare" class="btn-link" type="button">分享</button>
     </div>
   </div>
 
   <div id="resultCard" class="card" style="margin-top:12px;display:none">
     <div class="hint" id="meta2"></div>
-    <div style="overflow:auto;max-height:70vh;margin-top:6px">
-      <table>
+    <div id="resultScroll" style="overflow:auto;max-height:70vh;margin-top:6px">
+      <table id="resultTable">
         <thead>
           <tr>
             <th>代號</th><th>名稱</th><th>認購/售</th>
@@ -73,20 +131,46 @@
 </div>
 
 <script>
-/* ==== 小工具（保留最少） ==== */
+/* ==== 小工具 ==== */
 const $=s=>document.querySelector(s);
 const fmtNum=(v,d=2)=>(v==null||!isFinite(v))?"—":(+v).toFixed(d);
 const showPct100=(v,d=2)=>(v==null||!isFinite(v))?"—":(v*100).toFixed(d)+"%";
 function toHalfWidth(s){return String(s).replace(/[\uFF01-\uFF5E]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');}
-function num(x){if(x==null)return null;let s=String(x).trim();if(!s)return null;s=toHalfWidth(s).replace(/,/g,"").replace(/%$/,"");if(/^\.\d+$/.test(s))s="0"+s;const v=parseFloat(s);return isNaN(v)?null:v;}
-function normalizeKey(k){if(k==null)return"";let s=String(k).replace(/\uFEFF/g,"");s=toHalfWidth(s).trim().replace(/\s+/g,"").replace(/\([^)]*\)/g,"").replace(/%/g,"");if(s.startsWith("Unnamed")||s==="__EMPTY")return"";return s.toLowerCase();}
-const ALIAS={"權證代碼":["權證代碼","代碼"],"權證名稱":["權證名稱","名稱"],"買賣價差比":["買賣價差比","價差比"],"實質槓桿":["實質槓桿","槓桿"],"行使比例":["行使比例","轉換比率"],"距到期天數":["距到期天數","剩餘天數"],"履約價":["履約價"],"權證成交價":["權證成交價","成交價"],"成交價隱波":["成交價隱波","隱含波動率"],"價內外程度":["價內外程度"],"流通在外比率":["流通在外比率"]};
+function num(x){
+  if(x==null)return null;
+  let s=String(x).trim();
+  if(!s)return null;
+  s=toHalfWidth(s).replace(/,/g,"").replace(/%$/,"");
+  if(/^\.\d+$/.test(s))s="0"+s;
+  const v=parseFloat(s);
+  return isNaN(v)?null:v;
+}
+function normalizeKey(k){
+  if(k==null)return"";
+  let s=String(k).replace(/\uFEFF/g,"");
+  s=toHalfWidth(s).trim().replace(/\s+/g,"").replace(/\([^)]*\)/g,"").replace(/%/g,"");
+  if(s.startsWith("Unnamed")||s==="__EMPTY")return"";
+  return s.toLowerCase();
+}
+const ALIAS={
+  "權證代碼":["權證代碼","代碼"],
+  "權證名稱":["權證名稱","名稱"],
+  "買賣價差比":["買賣價差比","價差比"],
+  "實質槓桿":["實質槓桿","槓桿"],
+  "行使比例":["行使比例","轉換比率"],
+  "距到期天數":["距到期天數","剩餘天數"],
+  "履約價":["履約價"],
+  "權證成交價":["權證成交價","成交價"],
+  "成交價隱波":["成交價隱波","隱含波動率"],
+  "價內外程度":["價內外程度"],
+  "流通在外比率":["流通在外比率"]
+};
 const N2STD=(()=>{const m=new Map();for(const s in ALIAS){ALIAS[s].forEach(a=>m.set(normalizeKey(a),s));}return m;})();
 function normRow(row){const o={};for(const k in row){const nk=normalizeKey(k);if(!nk)continue;o[N2STD.get(nk)||k]=row[k];}return o;}
 function mojibake(keys){if(!keys||!keys.length)return true;const s=keys.join("|");return / /.test(s)||(!/[\u4E00-\u9FFF]/.test(s)&&/[\u00C0-\u024F]/.test(s));}
 
 /* ==== 狀態 ==== */
-let RAW=[], ROWS=[];
+let RAW=[];
 
 /* ==== 讀檔（CSV: Big5→UTF8；XLSX: array） ==== */
 $("#fileInput").addEventListener("change",()=>{
@@ -126,32 +210,53 @@ $("#fileInput").addEventListener("change",()=>{
   }
 });
 
-/* ==== 計算 + 渲染（即時） ==== */
+/* ==== 計算 + 渲染 ==== */
+function getLimit(){
+  const v = parseInt($("#selLimit").value,10);
+  return isNaN(v)?10:Math.max(1,Math.min(1000,v));
+}
+
 function compute(){
   if(!RAW.length) return [];
   const want=$("#selType").value, dropZero=$("#chkFilterZeroSpread").checked;
   const rows=RAW.map(r=>{
     const name=r["權證名稱"]??"", code=r["權證代碼"];
-    let cp=""; if(/[售]/.test(name)||/\bP\b/i.test(name)||/PUT/i.test(name))cp="P";
+    let cp="";
+    if(/[售]/.test(name)||/\bP\b/i.test(name)||/PUT/i.test(name))cp="P";
     else if(/[購]/.test(name)||/\bC\b/i.test(name)||/CALL/i.test(name))cp="C";
-    const spread=num(r["買賣價差比"]), lev=num(r["實質槓桿"]), exr=num(r["行使比例"]), days=num(r["距到期天數"]);
+    const spread=num(r["買賣價差比"]),
+          lev=num(r["實質槓桿"]),
+          exr=num(r["行使比例"]),
+          days=num(r["距到期天數"]);
     const s1=(spread!=null && Math.abs(lev)>0)? spread/Math.abs(lev):null;
     const s2=(s1!=null && exr>0)? s1/exr:null;
-    return{code,name,cp,spread,leverage:lev,exercise:exr,s1,s2,
-           days_left:isFinite(days)?Math.round(days):null,
-           strike:r["履約價"],price:r["權證成交價"]??r["成交價"],
-           iv:num(r["成交價隱波"]),moneyness:r["價內外程度"],float_rate:r["流通在外比率"]};
+    return{
+      code,name,cp,spread,leverage:lev,exercise:exr,s1,s2,
+      days_left:isFinite(days)?Math.round(days):null,
+      strike:r["履約價"],
+      price:r["權證成交價"]??r["成交價"],
+      iv:num(r["成交價隱波"]),
+      moneyness:r["價內外程度"],
+      float_rate:r["流通在外比率"]
+    };
   }).filter(x=>x.cp===want && (x.days_left==null || x.days_left>60) && (!dropZero || (+x.spread!==0)));
 
   const key=$("#selSortKey").value, dir=$("#selOrder").value==="desc"?-1:1;
-  rows.sort((a,b)=>{const va=a[key],vb=b[key]; if(va==null&&vb==null)return 0; if(va==null)return 1; if(vb==null)return -1; return (va>vb?1:(va<vb?-1:0))*dir;});
+  rows.sort((a,b)=>{
+    const va=a[key],vb=b[key];
+    if(va==null&&vb==null)return 0; if(va==null)return 1; if(vb==null)return -1;
+    return (va>vb?1:(va<vb?-1:0))*dir;
+  });
   return rows;
 }
+
 function render(rows){
   $("#resultCard").style.display="block";
-  $("#meta2").textContent=`筆數：${rows.length}（${$("#selType").value}、距到期>60、${$("#chkFilterZeroSpread").checked?"排除價差=0":"含價差=0"}）`;
+  const limit = getLimit();
+  const sliced = rows.slice(0, limit);
+  $("#meta2").textContent=`筆數：顯示 ${sliced.length} / 總 ${rows.length}（${$("#selType").value}、距到期>60、${$("#chkFilterZeroSpread").checked?"排除價差=0":"含價差=0"}）`;
   const tb=$("#tbody"); tb.innerHTML="";
-  rows.forEach(r=>{
+  sliced.forEach(r=>{
     const tr=document.createElement("tr");
     tr.innerHTML=`
       <td><b>${r.code??""}</b></td>
@@ -171,10 +276,70 @@ function render(rows){
     tb.appendChild(tr);
   });
 }
+
 function recompute(){ const rows=compute(); render(rows); }
 
-/* 即時重算 */
-["selType","selSortKey","selOrder","chkFilterZeroSpread"].forEach(id=>$(id).addEventListener("change",recompute));
+/* ==== 匯出 PNG & 分享 ==== */
+async function captureResultCard(){
+  const card = $("#resultCard");
+  const scroller = $("#resultScroll");
+  if(card.style.display==="none") return null;
+
+  const prevMaxH = scroller.style.maxHeight;
+  const prevOverflow = scroller.style.overflow;
+  scroller.style.maxHeight = "unset";
+  scroller.style.overflow = "visible";
+
+  const canvas = await html2canvas(card, {backgroundColor:null, scale:2});
+
+  scroller.style.maxHeight = prevMaxH;
+  scroller.style.overflow = prevOverflow;
+
+  return canvas;
+}
+
+$("#btnExportPng").addEventListener("click", async ()=>{
+  const canvas = await captureResultCard();
+  if(!canvas) return;
+  const a=document.createElement("a");
+  a.href=canvas.toDataURL("image/png");
+  const dt=new Date();
+  const y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,"0"), d=String(dt.getDate()).padStart(2,"0");
+  a.download=`warrant_filter_${y}${m}${d}.png`;
+  a.click();
+});
+
+$("#btnShare").addEventListener("click", async ()=>{
+  const canvas = await captureResultCard();
+  if(!canvas) {
+    if(navigator.share){
+      try{ await navigator.share({title:"權證本地篩選（精簡）", url:location.href}); }catch(e){}
+    }
+    return;
+  }
+  canvas.toBlob(async (blob)=>{
+    if(!blob){return;}
+    const file = new File([blob], "warrant_filter.png", {type:"image/png"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({title:"權證篩選結果", text:"我的權證篩選結果（S1/S2）", files:[file]}); return; }catch(e){}
+    }
+    if(navigator.share){
+      try{ await navigator.share({title:"權證本地篩選（精簡）", url:location.href}); return; }catch(e){}
+    }
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(()=>URL.revokeObjectURL(url), 10000);
+  }, "image/png");
+});
+
+/* ==== 事件綁定：同時監聽 change + input，並初始化套用 ==== */
+["selType","selSortKey","selOrder","chkFilterZeroSpread","selLimit"].forEach(id=>{
+  const el = $(`#${id}`);
+  if(!el) return;
+  el.addEventListener("change", recompute);
+  el.addEventListener("input", recompute);   // ← 這行確保即時更新
+});
+document.addEventListener("DOMContentLoaded", ()=>recompute()); // 初次載入也套用一次
 </script>
 </body>
 </html>
