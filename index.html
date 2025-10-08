@@ -11,7 +11,8 @@
   :root{
     --deep:#0A1221;--card:#0C152A;
     --gold-grad:linear-gradient(90deg,#F9E27C 0%,#D9B84B 50%,#B88A1E 100%);
-    --gold-solid:#E5C45A;--line:#223356;--muted:#9fb0d0;
+    --gold-soft:#E9D18A;--gold-solid:#E5C45A;
+    --line:#E9D18A55;--muted:#9fb0d0;
   }
   html,body{margin:0;background:var(--deep);color:#fff;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
   .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
@@ -21,9 +22,9 @@
   label.chk{display:flex;align-items:center;gap:8px;background:#0b1630;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
   .btn-link{background:var(--gold-grad);color:#000;border:none;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;text-decoration:none;transition:.2s;white-space:nowrap}
   .btn-link:hover{background:linear-gradient(90deg,#FFEFA5 0%,#F4D97A 50%,#E0B94A 100%)}
-  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
-  th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;white-space:nowrap}
-  th{position:sticky;top:0;background:#0f1b34;z-index:1}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px;border:1px solid var(--line)}
+  th,td{border:1px solid var(--line);padding:10px 8px;text-align:left;white-space:nowrap}
+  th{position:sticky;top:0;background:#0f1b34;z-index:1;color:var(--gold-soft)}
   tbody tr:hover{background:#0f1b34}
   .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
   .tag.C{background:#E25A5A;color:#fff;border:none;}
@@ -138,7 +139,6 @@ function recompute(){render(compute());}
 ["selType","selSortKey","selOrder","chkFilterZeroSpread","selLimit"].forEach(id=>{$(`#${id}`).addEventListener("change",recompute);$(`#${id}`).addEventListener("input",recompute);});
 document.addEventListener("DOMContentLoaded",()=>recompute());
 
-/* 匯出 PNG（目前顯示筆數 + 標題完整） */
 $("#btnExportPng").addEventListener("click",async()=>{
   const rows=compute().slice(0,getLimit());
   if(!rows.length)return;
@@ -158,7 +158,7 @@ $("#btnExportPng").addEventListener("click",async()=>{
 
   const canvas=await html2canvas(clone,{backgroundColor:null,scale:2});
   const a=document.createElement("a");
-  const dt=new Date();a.download=`warrant_filter_${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,"0")}${String(dt.getDate()).padStart(2,"0")}.png`;
+  const dt=new Date();a.download=`momo_warrant_${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,"0")}${String(dt.getDate()).padStart(2,"0")}.png`;
   a.href=canvas.toDataURL("image/png");a.click();
   wrap.remove();document.body.classList.remove("exporting");
 });
