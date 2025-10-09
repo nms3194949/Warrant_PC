@@ -13,6 +13,7 @@
     --gold-grad:linear-gradient(90deg,#F9E27C 0%,#D9B84B 50%,#B88A1E 100%);
     --gold-soft:#E9D18A;--gold-solid:#E5C45A;
     --line:#E9D18A55;--muted:#9fb0d0;
+    --red:#FF6B6B;
   }
   html,body{margin:0;background:var(--deep);color:#fff;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
   .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
@@ -32,6 +33,7 @@
   .tag:not(.C):not(.P){border:1px solid var(--line);color:#ccc}
   .hint{font-size:12px;color:var(--muted)}
   .gold-text{background:var(--gold-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700}
+  .red-text{color:var(--red);font-weight:700}
   .exporting .gold-text{background:none !important;-webkit-text-fill-color:var(--gold-solid) !important;color:var(--gold-solid) !important}
   @media (max-width:540px){.field{flex:1 1 160px}.btn-link{padding:10px 14px}}
 </style>
@@ -55,9 +57,13 @@
       <select id="selOrder" class="field" style="max-width:140px">
         <option value="asc" selected>升冪</option><option value="desc">降冪</option>
       </select>
-      <select id="selLimit" class="field" style="max-width:140px">
-        <option value="5">顯示 5 列</option><option value="10" selected>顯示 10 列</option>
-        <option value="15">顯示 15 列</option><option value="20">顯示 20 列</option>
+      <!-- 新增「顯示全部」 -->
+      <select id="selLimit" class="field" style="max-width:160px">
+        <option value="5">顯示 5 列</option>
+        <option value="10" selected>顯示 10 列</option>
+        <option value="15">顯示 15 列</option>
+        <option value="20">顯示 20 列</option>
+        <option value="all">顯示全部</option>
       </select>
       <label class="chk"><input type="checkbox" id="chkFilterZeroSpread" checked/>排除價差比=0</label>
       <a href="https://www.warrantwin.com.tw/eyuanta/Warrant/Search.aspx" target="_blank" class="btn-link">前往元大權證搜尋</a>
@@ -104,7 +110,14 @@ $("#fileInput").addEventListener("change",()=>{
   }else{const r=new FileReader();r.onload=e=>{const wb=XLSX.read(e.target.result,{type:"array"});const arr=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});done(arr,"XLSX");};r.readAsArrayBuffer(f);}
 });
 
-function getLimit(){const v=parseInt($("#selLimit").value,10);return isNaN(v)?10:Math.max(1,Math.min(1000,v));}
+/* 讀取「顯示行數」；支援 all */
+function getLimit(total){
+  const v=$("#selLimit").value;
+  if(v==="all") return total;
+  const n=parseInt(v,10);
+  return isNaN(n)?10:Math.max(1,Math.min(10000,n));
+}
+
 function compute(){
   if(!RAW.length)return[];
   const want=$("#selType").value,dropZero=$("#chkFilterZeroSpread").checked;
@@ -113,35 +126,74 @@ function compute(){
     let cp="";if(/[售]/.test(name)||/\bP\b/i.test(name)||/PUT/i.test(name))cp="P";
     else if(/[購]/.test(name)||/\bC\b/i.test(name)||/CALL/i.test(name))cp="C";
     const spread=num(r["買賣價差比"]),lev=num(r["實質槓桿"]),exr=num(r["行使比例"]),days=num(r["距到期天數"]);
-    const s1=(spread!=null&&Math.abs(lev)>0)?spread/Math.abs(lev):null;
-    const s2=(s1!=null&&exr>0)?s1/exr:null;
+    const s1=(spread!=null&&isFinite(spread)&&Math.abs(lev)>0)?spread/Math.abs(lev):null;
+    const s2=(s1!=null&&isFinite(s1)&&exr>0)?s1/exr:null;
     return{code,name,cp,spread,leverage:lev,exercise:exr,s1,s2,days_left:isFinite(days)?Math.round(days):null,strike:r["履約價"],price:r["權證成交價"]??r["成交價"],iv:num(r["成交價隱波"]),moneyness:r["價內外程度"],float_rate:r["流通在外比率"]};
-  }).filter(x=>x.cp===want&&(x.days_left==null||x.days_left>60)&&(!dropZero||(+x.spread!==0)));
+  }).filter(x=>{
+    if(x.cp!==want) return false;
+    if(!(x.days_left==null || x.days_left>60)) return false;
+    if(dropZero){
+      // 僅有值且等於 0 才排除；null 不排除
+      if(x.spread!=null && +x.spread===0) return false;
+    }
+    return true;
+  });
   const key=$("#selSortKey").value,dir=$("#selOrder").value==="desc"?-1:1;
   rows.sort((a,b)=>{const va=a[key],vb=b[key];if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;return(va>vb?1:(va<vb?-1:0))*dir;});
   return rows;
 }
+
+/* 依條件著色：槓桿、S1、S2 */
+function getClassForLeverage(lev){
+  if(lev==null||!isFinite(lev)) return "";
+  const v=Math.abs(lev);
+  if(v>5) return "gold-text";
+  if(v<2) return "red-text";
+  return "";
+}
+function getClassForS1(s1){
+  if(s1==null||!isFinite(s1)) return "";
+  return (s1<0.15) ? "gold-text" : "";
+}
+function getClassForS2(s2){
+  if(s2==null||!isFinite(s2)) return "";
+  if(s2>5) return "red-text";      // > 500%
+  if(s2<2) return "gold-text";     // < 200%
+  return "";
+}
+
 function rowHTML(r){
+  const levCls=getClassForLeverage(r.leverage);
+  const s1Cls=getClassForS1(r.s1);
+  const s2Cls=getClassForS2(r.s2);
   return `<td><b>${r.code??""}</b></td><td>${r.name??""}</td><td><span class="tag ${r.cp??""}">${r.cp??""}</span></td>
-    <td>${fmtNum(r.spread,3)}</td><td>${fmtNum(Math.abs(r.leverage),3)}</td><td>${fmtNum(r.exercise,3)}</td>
-    <td class="gold-text">${showPct100(r.s1,2)}</td><td class="gold-text">${showPct100(r.s2,2)}</td>
+    <td>${fmtNum(r.spread,3)}</td>
+    <td class="${levCls}">${fmtNum(Math.abs(r.leverage),3)}</td>
+    <td>${fmtNum(r.exercise,3)}</td>
+    <td class="${s1Cls}">${showPct100(r.s1,2)}</td>
+    <td class="${s2Cls}">${showPct100(r.s2,2)}</td>
     <td>${r.days_left??"—"}</td><td>${r.strike??""}</td><td>${r.price==null?"":fmtNum(r.price,3)}</td>
     <td>${r.iv==null?"—":fmtNum(r.iv,3)}</td><td>${r.moneyness??""}</td><td>${r.float_rate??""}</td>`;
 }
+
 function render(rows){
   $("#resultCard").style.display="block";
-  const limit=getLimit(),shown=rows.slice(0,limit);
-  $("#meta2").textContent=`筆數：顯示 ${shown.length} / 總 ${rows.length}`;
+  const limit=getLimit(rows.length), shown=rows.slice(0,limit);
+  $("#meta2").textContent=`筆數：顯示 ${shown.length} / 總 ${rows.length}（${$("#selType").value}、距到期>60、${$("#chkFilterZeroSpread").checked?"排除價差=0":"含價差=0"}）`;
   const tb=$("#tbody");tb.innerHTML="";
   shown.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=rowHTML(r);tb.appendChild(tr);});
 }
+
 function recompute(){render(compute());}
 ["selType","selSortKey","selOrder","chkFilterZeroSpread","selLimit"].forEach(id=>{$(`#${id}`).addEventListener("change",recompute);$(`#${id}`).addEventListener("input",recompute);});
 document.addEventListener("DOMContentLoaded",()=>recompute());
 
+/* 匯出 PNG（保留你的流程） */
 $("#btnExportPng").addEventListener("click",async()=>{
-  const rows=compute().slice(0,getLimit());
-  if(!rows.length)return;
+  const rows=compute();
+  const limit=getLimit(rows.length);
+  const picked=rows.slice(0,limit);
+  if(!picked.length)return;
   document.body.classList.add("exporting");
 
   const clone=$("#resultCard").cloneNode(true);
@@ -150,7 +202,7 @@ $("#btnExportPng").addEventListener("click",async()=>{
   if(sc){sc.style.maxHeight="unset";sc.style.overflow="visible";}
   const tb=clone.querySelector("#tbody");
   tb.innerHTML="";
-  rows.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=rowHTML(r);tb.appendChild(tr);});
+  picked.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=rowHTML(r);tb.appendChild(tr);});
 
   const wrap=document.createElement("div");
   wrap.style.position="absolute";wrap.style.left="-9999px";wrap.appendChild(clone);
